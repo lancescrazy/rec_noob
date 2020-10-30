@@ -84,13 +84,25 @@ $$
 > Ranking：
 >
 > - 收集更细致的用户特征，如：
+>
 >   - User features（年龄，性别，语言，民族）
+>
 >   - Contextual features（上下文特征：设备，时间等）
->   - Impression features（展示特征：app age，app历史统计信息等）
+>
+>   - Wide组件是FTRL + L1正则学习
+>
+>     Deep是AdaGrad学习
+>
+>     训练完推荐TopN
+>
+>     Wide&Deep需要深入理解业务，确定wide部分使用哪部分特征，deep部分使用那些特征，wide部分的交叉验证如何去选择Impression features（展示特征：app age，app历史统计信息等）
+>
 > - 将特征传入Wide和Deep一起训练：根据最终的loss计算出gradient，反向传播到Wide和Deep两部分中，分别训练自己的参数（wide组件主要填补deep组件的不足，是较少的cross product feature transformation而不是full size model
+>
 >   - 训练方法：mini batch stochastic optimization
 >   - Wide组件是FTRL + L1正则学习
 >   - Deep是AdaGrad学习
+>
 > - 训练完推荐TopN
 
 Wide&Deep需要深入理解业务，确定wide部分使用哪部分特征，deep部分使用那些特征，wide部分的交叉验证如何去选择
