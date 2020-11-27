@@ -107,9 +107,252 @@ $$
 
 Wide&Deep需要深入理解业务，确定wide部分使用哪部分特征，deep部分使用那些特征，wide部分的交叉验证如何去选择
 
+## 五、代码实战
 
+1. 使用tensorflow中已经封装好的wide&deep模型，这一部分主要熟悉模型训练的整体结构
+2. tensorflow中的keras实现wide&deep，尽可能看到模型内部的细节，并将其实现
 
+### 1. Tensorflow内置的WideDeepModel
 
+全局实现：
+
+```python
+tf.keras.experimental.WideDeepModel(
+	linear_model, dnn_model, activation=None, **kwargs
+)
+```
+
+这一步就是将 linear_model 与 dnn_model 拼接在一起，对应于 Wide-Deep FM 中的最后一步
+
+如：做一个简单的实现
+
+```python
+linear_model = LinearModel()
+dnn_model = keras.Sequential([keras.layers.Dense(units=64),
+                             keras.layers.Dense(units=1)])
+combined_model = WideDeepModel(linear_model, dnn_model)
+combined_model.compile(optimizer=['sgd','adam'], 'mse', ['mse'])
+# define dnn_inputs and linear_inputs as separate numpy arrays or 
+# a single numpy array if dnn_inputs is same as linear_inputs.
+combined_model.fit([linear_inputs, dnn_inputs], y, epochs)
+# or define a single 'tf.data.Dataset' that contains a single tensor or 
+# separate tensors for dnn_inputs and linear_inputs
+dataset = tf.data.Dataset.from_tensors(([linear_inputs, dnn_inputs], y))
+combined_model.fit(dataset, epochs)
+```
+
+第一步是直接调用 keras.experimental 中的 linear_model ，第二步简单实现了一个全连接神经网络，第三步使用 WideDeepModel 将前两步产生的两个 model 拼接在一起，形成最终的 combined_model，接着就是常规的 compile 和 fit 了。
+
+除此之外线性模型与DNN模型在联合训练之前均可进行分别训练：
+
+```python
+linear_model = LinearModel()
+linear_model.compile('adagrad', 'mse')
+linear_model.fit(linear_inputs, y, epochs)
+dnn_model = keras.Sequential([keras.layers.Dense(units=1)])
+dnn_model.compile('rmsprop', 'mse')
+dnn_model.fit(dnn_inputs, y, epoches)
+combined_model = WideDeepModel(linear_model, dnn_model)
+combined_model.compile(optimizer=['sgd', 'adam'], 'mse', ['mse'])
+combined_model.fit([linear_inputs, dnn_inputs], y, epochs)
+```
+
+前三行代码训练一个线性模型，中间三行训练一个 DNN 模型，最后三行将两个模型联合训练
+
+**Tensorflow 实现 wide&deep 模型**
+
+这一部分对原始特征进行转换，以及 deep 特征和 wide 特征的选择，特征的交叉一系列特征操作，模型也分成了 wide 部分和 deep 部分，这里为了简单实现，使用了同一个优化器优化两部分
+
+## 六、课后思考
+
+Wide&Deep 模型仍然存在哪些不足，针对这些不足，工程师们有哪些改进
+
+### 1 模型的训练效率提升
+
+> 稀疏矩阵相乘
+>
+> 数据输入时，用 Tensorflow Data API 代替最初的 feed_dict
+>
+> 用 TFRecords 文件格式代替最初的 csv 来存储训练参数，并且实现在 hadoop 上并发成 TFRecords 数据文件
+>
+> 多进程并行：多个读进程将 HDFS 上的 TFRecords 下载到本地，一个进程负责训练
+>
+> 多GPU同时进行并行训练
+
+### 2 新版本 TF
+
+新版本 TF 自带了 DNNLinearCombinedClassifier 实现了 Wide&Deep 模型
+
+> 几行代码即可
+>
+> 继承自 Estimator，基类功能：
+>
+> - 定时保存模型
+> - 重启后自动加载模型继续训练
+> - 自动保存 metric 供模型可视化、分布式训练
+>
+> 阅读源码：掌握TensorFlow高级API方法，摆脱Estimator限制，用Tensorflow底层API实现更复杂模型
+
+### 3 概览
+
+第一部分：
+
+> 开场白：
+>
+> “记忆与扩展”，“类别特征”，“特征交叉”
+>
+> Wide&Deep, FM/FFM/DeepFM, Deep&Cross Network, Deep Interest Network
+
+第二部分：
+
+> Feature Column:
+>
+> 特征处理方法：特征工程是 Wide&Deep 的精华，特别是对 Categorical 特征的处理
+
+第三部分：
+
+> DNNLinearCombinedClassifier
+
+最后：删除业务细节开源代码
+
+### 4 Wide & Deep 的三个关键词
+
+#### 4.1 记忆与扩展
+
+记忆 Memorization， 扩展 Generalization
+
+Exploitation & Exploration，著名的 EE 问题
+
+Wide 侧重于记忆？能记住什么，将什么样的特征输入Wide
+
+> 历史数据中常见，高频的模式，是推荐系统中，红海
+>
+> 重点学习模式之间的权重，做模式的筛选
+>
+> 由不能发现新模式：根据人工经验，业务背景，将我们认为有价值的、显而易见的特征及特征组合，喂入Wide
+
+也要能从历史数据中发现低频、长尾的模式，发现用户兴趣的蓝海，即具备良好的扩展能力
+
+Deep 侧
+
+> 通过 embedding ＋ 深层交互，能够学到国籍、节日、食品各种 tag 的最优向量表示
+>
+> 推荐引擎给<中国人、感恩节、火鸡>这种新组合，可能会打一个不低的分数
+>
+> 即通过 Embedding 将 tag 向量化，变 tag 的精确匹配，为 tag 向量的模糊查找，使得自己具备了良好的“扩展能力”
+
+#### 4.2 类别特征
+
+深度学习热潮：发源于CNN在图像识别上取得的巨大成功，后来才扩展到推荐、搜索等领域
+
+实际上两者间有很大的不同，其中重要的不同，就是图像都是稠密特征，而推荐搜索中，都是稀疏的类别、ID类特征，Google在《Ad Click Prediction: a View from the Trenches》：**因为稀疏/稠密的区别，CNN中效果良好的Dropout技术，运用到CTR预估，推荐领域反而会恶化性能**
+
+相比于实数型特征，**稀疏的类别、ID类特征，才是推荐、搜索领域的公民**，被更广泛研究，即使有一些实数值特征，如：历史曝光次数、点击次数、CTR等，也往往通过 bucket 的方式变成 categorical 特征，才喂进模型
+
+​       推荐、搜索喜欢稀疏的类别/ID特征，主要有三个原因    
+
+> LR，DNN 在底层还是一个线性模型，但在生活中，**标签 y 和特征 x 之间较少存在线性关系，往往是分段的**，以“点击率 ～ 历史曝光次数”间关系为例，曝光过1~2次，是正相关，再曝光1~2次，用户由于好奇，没准就点击了；但是若曝光了8~9次，用户失去新鲜感，越多曝光，越不能再点，呈现出负相关，因此，categorical 特征相比于 numeric 特征，更符合现实场景
+>
+> 推荐、搜索一般都是基于用户、商品的标签画像系统，而标签天生就是Categorical的
+>
+> 稀疏的类别/ID类特征，可以稀疏的**存储，传输，运算，提升运算速率**
+
+**但是**，稀疏的categorical/ID类特征，也有着**单个特征表达能力弱、特征组合爆炸、分布不均匀导致受训程度不均匀**，为解决这些问题：
+
+> FTRL这样的算法，充分利用输入的稀疏性在线更新模型，训练处的模型也是稀疏的，便于快速预测
+>
+> Parameter Server分布式系统，充分利用特征的稀疏性，不必再各机器之间同步全部模型，而让每台机器按需同步自己所需要的部分模型权重，按需要上传这一部分权重的梯度，提升分布式计算的效率
+>
+> TensorFlow Feature Column类，除了一个 numeric_column 是处理实数特征，其他都是围绕处理 Categorical特征的，封装了常见的分桶、交叉、哈希
+
+#### 4.3 特征交叉
+
+特征交叉，增强 categorical 特征的表达能力。围绕着如何做特征交叉
+
+假设Categorical按照one-hot-encoding展开，共n个特征，很稀疏
+
+若在LR中加入特征交叉，只考虑二项式交叉，要学习 1(bias) + n(一次项) + 1/2*n(n-1)(二次项） = 1+n+0.5n(n-1)，计算量大容易过拟合，大量的交叉项x_ix_j 由于在训练数据中稀少甚至没有，所以，为此发明了Factorization Machine（FM）算法，第 i 维度，对应一个k维隐向量v_i，交叉项的权重有两个隐向量的内积表示<v_i, v_j>
+$$
+y(x) = w_0 + \sum_{i=1}^{n}w_ix_i + \sum_{i=1}^{n}\sum_{j=i+1}^{n}<v_i,v_j>x_ix_j
+$$
+FM的优势：
+
+- 将需要优化的权重，由1+n+0.5n(n-1)减小到1+n+n*k，而k<<n，即减少了计算量，也降低了过拟合的风险
+- 原公式只有x_ix_j都不为0，w_ij才有训练的机会。所有FM公式中，所有x_i 不等于0的样本都可以训练v_i，而所有的x_j不等于0的样本都可以训练v_j，权重得到训练的机会大大增加
+
+FM 一般只限于二次特征交叉，而深度神经网络 DNN 先将 Categorical / id 特征通过 Embedding 映射成稠密向量，再喂入 DNN ，让 DNN 自动学习到这些特征之间的深层交叉
+
+Wide & Deep:
+
+> - wide 侧 LR，一般根据人工先验知识，将一些简单明显的特征交叉，喂入 wide 侧，让 wide 侧能够记住这些规则
+>
+> - Deep 就是 DNN ，通过 Embedding 的方式将 Categorical / id 特征映射成稠密向量，让 DNN 学习到这些特征之间的深层交叉，以增强扩展能力
+
+DeepFM在wide侧用一个FM模型替换了LR，能够自动学习到所有二次项的系数
+
+> 关键在Deep侧与wide侧共享一个Embedding矩阵来映射categorical/id特征到稠密向量
+>
+> ​                      
+>
+> Deep将Embedding结果喂入DNN，来学习深层交互的权重，着重扩展
+>
+> Wide将Embedding结果喂入FM，来学习二次交互的权重，着重记忆
+
+但是DNN的深层交互是隐式的，不知道学习的是那些特征的几阶交互，google的Deep&cross network允许显式指定交叉阶次，并高效学习
+
+![tag](https://upload-images.jianshu.io/upload_images/25239821-6206b7345b04359f.jpg?imageMogr2/auto-orient/strip|imageView2/2/format/webp)
+
+Feature Column是特征预处理器，他和输入数据间关系如下
+
+![特征预处理器](https://upload-images.jianshu.io/upload_images/25239821-dc37b12321b9b93a.jpg?imageMogr2/auto-orient/strip|imageView2/2/format/webp)
+
+def input_fn()
+
+> "SepalLength": [...],
+>
+> features - labels
+
+tf.feature_column
+
+> numeric_column("SepalLength")
+>
+> how to bridge input to model
+>
+> match feature names from input_fn 
+
+tf.estimator.DNNClassifier
+
+> classifier = DNNClassifier(feature_columns=feature_columns,
+>
+> ​											hidden_units=[10, 10],
+>
+> ​											n_classed=3,
+>
+> ​											model_dir=PATH)
+
+- Feature Column本身不存储数据，只是封装一些预处理逻辑，比如输入的字符串（tag），把这些字符串根据字典映射成id，再根据id映射成Embedding vector这些预处理逻辑有不同的feature column
+
+- Input_fn 返回的data_set可以看成{feature_name: feature tensor}的 dict ，而每个 feature column 定义时需要指定一个名字，feature column 与 input 通过这个名字联系在一起
+
+关系图如下：其中只有一个numeric_column是纯粹处理数值特征，其余都与处理Categorical特征有关
+
+![](https://upload-images.jianshu.io/upload_images/25239821-7c670400a9877356.jpg?imageMogr2/auto-orient/strip|imageView2/2/w/720/format/webp)
+
+重要说明：
+
+> Feature column的实现在：tensorflow/python/feature_column/feature_column.py
+>
+> 删除了一些异常处理，assert，检查type，logging等辅助代码
+
+### 5 基类 FeatureColumn，DenseColumn，CategoricalColumn
+
+___FeatureColumn 是所有 feature column 的基类_
+
+比较重要的是，__transform_feature(self, inputs) 虚函数，各子类主要的预处理逻辑都是通过重载这个函数来实现的
+
+基类__DenseColumn是所有numeric/dense feature column的基类，比较重要的是：get_dense_tensor(self, inputs, ..)虚函数
+
+> - inputs可以理解为从input_fn返回的dict of input tensor的wrapper。inputs一般是__LazyBuilder类型的，除了实现按列名查找input tensor的
 
 
 
